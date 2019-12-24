@@ -18,13 +18,24 @@
 
 package com.example.flink.metrics;
 
+import akka.stream.impl.fusing.Scan;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.source.RichSourceFunction;
+import org.apache.flink.streaming.api.functions.source.SocketTextStreamFunction;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
+
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Random;
+import java.util.Scanner;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Skeleton for a Flink Streaming Job.
@@ -44,13 +55,54 @@ public class WindowWordCountJob {
         // set up the streaming execution environment
 		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 		DataStream<Tuple2<String, Integer>> dataStream = env
-				.socketTextStream("localhost", 9999)
+				.addSource(new WordSource())
 				.flatMap(new Splitter())
 				.keyBy(0)
-				.timeWindow(Time.seconds(5))
+				.timeWindow(Time.seconds(10))
 				.sum(1);
         dataStream.writeAsText("/tmp/flink.out", FileSystem.WriteMode.OVERWRITE).setParallelism(1);
+        dataStream.print().setParallelism(1);
+        env.getConfig().setGlobalJobParameters(ParameterTool.fromArgs(args));
 		env.execute("Window WordCount");
+    }
+
+    public static final class WordSource extends RichSourceFunction<String> {
+
+        private static final long serialVersionUID = 1L;
+        private transient Random random;
+        private transient int waitMS; // wait milliseconds
+        private transient boolean isCancel;
+        private transient String[] lines;
+
+        @Override
+        public void open(Configuration parameters) throws Exception {
+            super.open(parameters);
+            this.waitMS = parameters.getInteger("interval", 3000);
+            random = new Random();
+            InputStream is = getClass().getClassLoader().getResourceAsStream("text.txt");
+            Scanner s = new Scanner(is);
+            ArrayList<String> raw = new ArrayList<>();
+            while(s.hasNext()) {
+                String line = s.nextLine();
+                if(line.trim().length() > 0) {
+                    raw.add(line);
+                }
+            }
+            this.lines = raw.toArray(new String[]{});
+        }
+
+        @Override
+        public void run(SourceContext<String> ctx) throws Exception {
+            while (! isCancel) {
+                TimeUnit.MILLISECONDS.sleep(Math.max(100, random.nextInt(this.waitMS)));
+                ctx.collect(this.lines[random.nextInt(this.lines.length - 1)]);
+            }
+        }
+
+        @Override
+        public void cancel() {
+            isCancel = true;
+        }
     }
 
     public static class Splitter implements FlatMapFunction<String, Tuple2<String, Integer>> {
