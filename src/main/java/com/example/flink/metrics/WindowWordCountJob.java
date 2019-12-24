@@ -18,7 +18,6 @@
 
 package com.example.flink.metrics;
 
-import akka.stream.impl.fusing.Scan;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.utils.ParameterTool;
@@ -27,9 +26,12 @@ import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.source.RichSourceFunction;
-import org.apache.flink.streaming.api.functions.source.SocketTextStreamFunction;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
+
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.Histogram;
+import org.apache.flink.runtime.metrics.DescriptiveStatisticsHistogram;
 
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -74,6 +76,9 @@ public class WindowWordCountJob {
         private transient boolean isCancel;
         private transient String[] lines;
 
+        private transient Counter eventCounter;
+        private transient Histogram valueHistogram;
+
         @Override
         public void open(Configuration parameters) throws Exception {
             super.open(parameters);
@@ -89,13 +94,22 @@ public class WindowWordCountJob {
                 }
             }
             this.lines = raw.toArray(new String[]{});
+
+            eventCounter = getRuntimeContext().getMetricGroup().counter("events");
+            valueHistogram =
+                    getRuntimeContext()
+                            .getMetricGroup()
+                            .histogram("value_histogram", new DescriptiveStatisticsHistogram(10_000_000));
         }
 
         @Override
         public void run(SourceContext<String> ctx) throws Exception {
             while (! isCancel) {
+                eventCounter.inc();
                 TimeUnit.MILLISECONDS.sleep(Math.max(100, random.nextInt(this.waitMS)));
-                ctx.collect(this.lines[random.nextInt(this.lines.length - 1)]);
+                String text = this.lines[random.nextInt(this.lines.length - 1)];
+                valueHistogram.update(text.length());
+                ctx.collect(text);
             }
         }
 

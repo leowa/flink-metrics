@@ -161,6 +161,7 @@ under the License.
 					</buildArgs>
 					<repository>leowa/flink-metrics</repository>
 					<tag>${project.version}</tag>
+					<pullNewerImage>false</pullNewerImage>
 				</configuration>
 				<executions>
 					<execution>
